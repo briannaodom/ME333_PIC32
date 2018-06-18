@@ -1,0 +1,158 @@
+#include "NU32.h"          // constants, functions for startup and UART
+#include <stdio.h>
+#include "LCD.h"
+#define NUMSAMPS 1000 // number of points in waveform
+#define PLOTPTS 200 
+#define DECIMATION 10
+#define SAMPLE_TIME 20
+#define LENGTH 100
+
+static volatile int Waveform[NUMSAMPS]; // waveform
+static volatile int ADCarray[PLOTPTS];
+static volatile int REFarray[PLOTPTS];
+static volatile int StoringData = 0;
+static volatile float kp = 0, ki = 0;
+
+void makeWaveform();
+void __ISR(_TIMER_2_VECTOR, IPL5SOFT) Controller();
+unsigned int adc_sample_convert();
+void printGainsToLCD();
+
+int main(void){
+  char message[100];
+  float kptemp = 0, kitemp = 0;
+  int i = 0;
+  
+  NU32_Startup();          // cache on, interrupts on, LED/button init, UART init
+  T3CONbits.TCKPS = 0;     // Timer3 prescaler N=1 (1:1)
+  PR3 = 3999;              // period = (PR3+1) * N(=1) * 12.5 ns = 200 us, 20 kHz
+  TMR3 = 0;                // initial TMR3 count is 0
+  OC1CONbits.OCM = 0b110;  // PWM mode without fault pin; other OC1CON bits are defaults
+  OC1CONbits.OCTSEL = 0;    // enable OC1COn
+  OC1R = 3000;              // initialize before turning OC1 on; afterward it is read-only
+  T3CONbits.ON = 1;        // turn on Timer3
+  OC1CONbits.ON = 1;       // turn on OC1
+  T2CONbits.TCKPS = 2;      // Timer2 prescaler 
+  PR2 = 19999;              //period = (PR2+1) * N() * 12.5 ns 
+  TMR2= 0;                  // initial TMR2 count is 0F
+  T2CONbits.ON = 1;  // turn on Timer2
+  AD1PCFGbits.PCFG0 = 0;   //ANO pin
+  AD1CON3bits.ADCS = 2;    //ADC clock period is TAD = 75 ns
+  AD1CON1bits.ADON = 1;    //turn on A/D converter
+  
+  LCD_Setup();
+  
+  makeWaveform();
+
+  __builtin_disable_interrupts();
+  IPC2bits.T2IP = 5;
+  IPC2bits.T2IS = 0;
+  IFS0bits.T2IF = 0;
+  IEC0bits.T2IE = 1;
+  __builtin_enable_interrupts();
+
+  _CP0_SET_COUNT(0);
+
+  while(_CP0_GET_COUNT() < 4 * 40000000){
+    ;
+  }
+  while(1) { // infinite loop
+    NU32_ReadUART3(message, sizeof(message));
+    sscanf(message, "%f %f", &kptemp, &kitemp);
+    __builtin_disable_interrupts();
+    kp = kptemp;
+    ki = kitemp;
+    printGainsToLCD();
+    __builtin_enable_interrupts();
+    StoringData = 1;
+    
+    
+    while(StoringData) {
+    ;                  
+  }
+  for (i=0; i<PLOTPTS; i++){
+    sprintf(message, "%d %d %d\r\n", PLOTPTS-i, ADCarray[i], REFarray[i]);
+    NU32_WriteUART3(message);
+    }
+   }
+  return 0;
+}
+
+void makeWaveform()
+{
+  int i = 0, center = 10000, A = 5000; // center= (PR2+1)/2, A = center/2
+  for (i = 0; i < NUMSAMPS; ++i)
+  {
+    if ( i < NUMSAMPS/2) {
+      Waveform[i] = center + A;
+    } else {
+      Waveform[i] = center - A;
+    }
+  }
+}
+
+
+void __ISR(_TIMER_2_VECTOR, IPL5SOFT) Controller(void) { // _TIMER_2_VECTOR = 8
+  static int counter = 0;  // initialize counter once
+  static int plotind = 0;
+  static int decctr = 0;
+  static int adcval = 0;
+ 
+  OC1RS = Waveform[counter]; // insert line(s) to set OC1RS
+  //counter++;                        // add one to counter every time ISR is entered      
+  
+  adcval = adc_sample_convert(0);
+                       
+  if (StoringData) {
+    decctr++;
+    if (decctr == DECIMATION) {
+    decctr = 0;
+    ADCarray[plotind] = adcval;
+    REFarray[plotind] = Waveform[counter];
+    plotind++;
+  }
+  if (plotind == PLOTPTS) {
+    plotind = 0;
+    StoringData = 0;
+  }
+  }
+  counter++;
+  if (counter == NUMSAMPS){
+    counter = 0;
+   }
+   IFS0bits.T2IF = 0; // insert line to clear interrupt flag
+  }
+  
+unsigned int adc_sample_convert(int pin){ 
+    unsigned int elapsed = 0, finish_time = 0;
+
+    
+    AD1CHSbits.CH0SA = pin; // connect chosen pin to MUXA for sampling
+    AD1CON1bits.SAMP = 1; // start sampling
+    elapsed = _CP0_GET_COUNT(); // sample for more than 250 ns
+    finish_time = elapsed + SAMPLE_TIME;
+    
+    while (_CP0_GET_COUNT() < finish_time) { 
+      ;
+    }
+    AD1CON1bits.SAMP = 0;  // stop sampling and start converting
+
+    while (!AD1CON1bits.DONE){ // wait for the conversion process to finish
+      ;
+    }
+    return ADC1BUF0; // read the buffer with the result
+}
+
+void printGainsToLCD(void){
+  char msg[LENGTH];
+  LCD_Clear();
+  
+  sprintf(msg, "kp: %3.1f: ", kp);
+  LCD_Move(0,0);
+  LCD_WriteString(msg);
+  sprintf(msg, "ki: %3.1f: ", ki);
+  LCD_Move(1,0);
+  LCD_WriteString(msg);
+}
+
+

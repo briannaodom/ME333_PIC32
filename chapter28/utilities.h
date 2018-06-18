@@ -1,0 +1,8 @@
+#ifndef UTILITIES_H
+#define UTILITIES_H
+typedef enum {IDLE, PWM, TUNE, ITEST, HOLD, TRACK } Mode;
+void utilities_init(void);
+int GetMode(void);
+void SetMode(Mode m);
+
+#endif

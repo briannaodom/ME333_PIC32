@@ -1,0 +1,28 @@
+#include "NU32.h"          
+#include "isense.h"
+#include "currentcontrol.h"
+#include "utilities.h"
+
+void currentcontrol_init(void) {
+  TRISDbits.TRISD6 = 0;
+
+  T3CONbits.TCKPS = 0b000;     
+  PR3 = 3999;            
+  TMR3 = 0;                
+  OC1CONbits.OCTSEL = 1;
+  OC1CONbits.OCM = 0b110;  
+  OC1RS = 4000;             
+  OC1R = 4000;             
+  T3CONbits.ON = 1;      
+  OC1CONbits.ON = 1;    
+
+  T2CONbits.TCKPS = 0b000;           
+  PR2 = 15999;      
+  TMR2 = 0;
+  T2CONbits.ON = 1;
+  IPC2bits.T2IP = 5;           
+  IPC2bits.T2IS = 0;           
+  IFS0bits.T2IF = 0;         
+  IFS0bits.T2IF = 1;            
+  IEC0bits.T2IE = 1;          
+}

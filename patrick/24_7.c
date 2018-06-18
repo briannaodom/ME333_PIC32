@@ -1,0 +1,212 @@
+#include "NU32.h"
+#include "LCD.h"
+#include <stdio.h>
+
+// number of points in waveform
+#define NUMSAMPS 1000
+// number of points in waveform
+#define NUMSAMPS_DIV_2 NUMSAMPS/2
+// number of data points to plot
+#define PLOTPTS 200
+// plot every 10th point
+#define DECIMATION 10
+// 10 core timer ticks = 250 ns
+#define SAMPLE_TIME 20
+
+// waveform
+static volatile int Waveform[NUMSAMPS];
+// measured values to plot
+static volatile int ADCarray[PLOTPTS];
+// reference values to plot
+static volatile int REFarray[PLOTPTS];
+// if this flag = 1, currently storing
+static volatile int StoringData = 0;
+// plot data, control gains
+static volatile float Kp = 0, Ki = 0;
+
+unsigned int adc_sample_convert(int pin);
+
+void makeWaveform(void);
+
+void printGainsToLCD(void);
+
+void __ISR(_TIMER_2_VECTOR, IPL5SOFT) Controller(void);
+
+int main(void)
+{
+  char message[100];
+  float kptemp = 0, kitemp = 0;
+  int i = 0;
+
+  NU32_Startup();          // cache on, interrupts on, LED/button init, UART init
+  T3CONbits.TCKPS = 0;     // Timer3 prescaler N=1 (1:1)
+  PR3 = 3999;              // period = (PR3+1) * N(=1) * 12.5 ns = 200 us, 20 kHz
+  TMR3 = 0;                // initial TMR2 count is 0
+  OC1CONbits.OCM = 0b110;  // PWM mode without fault pin; other OC1CON bits are defaults
+  OC1CONbits.OCTSEL = 0;
+  OC1R = 3000;             // initialize before turning OC1 on; afterward it is read-only
+  T3CONbits.ON = 1;        // turn on Timer3
+  OC1CONbits.ON = 1;       // turn on OC1
+  T2CONbits.TCKPS = 2;
+  PR2 = 19999;
+  TMR2 = 0;
+  T2CONbits.ON = 1;
+
+  AD1PCFGbits.PCFG0 = 0;  // AN0 is an adc pin
+  AD1CON3bits.ADCS = 2;    // ADC clock period is Tad = 2*(ADCS+1)*Tpb = 2*3*12.5ns = 75ns
+  AD1CON1bits.ADON = 1;    // turn on A/D converter
+
+  makeWaveform();
+
+  __builtin_disable_interrupts();
+  IPC2bits.T2IP = 5;
+  IPC2bits.T2IS = 0;
+  IFS0bits.T2IF = 0;
+  IEC0bits.T2IE = 1;
+  __builtin_enable_interrupts();
+
+
+  LCD_Setup();
+  LCD_Clear();
+  LCD_Move(0,0);
+
+  _CP0_SET_COUNT(0);
+
+  while(_CP0_GET_COUNT() < 160000000)
+  {
+    ;
+  }
+
+  while(1)
+  {
+    NU32_ReadUART3(message, sizeof(message));
+    sscanf(message, "%f %f", &kptemp, &kitemp);
+
+    __builtin_disable_interrupts();
+    Kp = kptemp;
+    Ki = kitemp;
+    __builtin_enable_interrupts();
+
+    StoringData = 1;
+    printGainsToLCD();
+    while(StoringData)
+    {
+      ;                  
+    }
+
+    for(; i < PLOTPTS; ++i)
+    {
+      sprintf(message, "%d %d %d\r\n", PLOTPTS-i, ADCarray[i], REFarray[i]);
+      NU32_WriteUART3(message);
+    }
+
+    // unsure if line below will cause error or not
+    LCD_Clear();
+  }
+
+  LCD_Clear();
+
+  return 0;
+}
+
+// sample & convert the value on the given 
+// adc pin the pin should be configured as an 
+// analog input in AD1PCFG
+unsigned int adc_sample_convert(int pin)
+{ 
+    unsigned int elapsed = 0, finish_time = 0;
+
+    // connect chosen pin to MUXA for sampling
+    AD1CHSbits.CH0SA = pin;
+
+    // start sampling
+    AD1CON1bits.SAMP = 1;
+
+    // sample for more than 250 ns
+    elapsed = _CP0_GET_COUNT();
+    finish_time = elapsed + SAMPLE_TIME;
+    while (_CP0_GET_COUNT() < finish_time)
+    { 
+      ;
+    }
+
+    // stop sampling and start converting
+    AD1CON1bits.SAMP = 0;
+
+    // wait for the conversion process to finish
+    while (!AD1CON1bits.DONE)
+    {
+      ;
+    }
+
+    // read the buffer with the result
+    return ADC1BUF0;
+}
+
+void makeWaveform(void)
+{
+  // square wave, fill in center value and amplitude
+  int i = 0, center = 10000, A = 5000;
+  for(; i < NUMSAMPS; ++i)
+  {
+    Waveform[i] = i < NUMSAMPS_DIV_2 ? center + A : center - A;
+  }
+}
+
+void printGainsToLCD(void)
+{
+  char line_1[10] = {};
+  char line_2[10] = {};
+
+  sprintf(line_1, "Kp: %i ", Kp);
+  sprintf(line_2, "Ki: %i ", Ki);
+
+  LCD_Clear();
+
+  LCD_Move(0,0);
+  LCD_WriteString(line_1);
+
+  LCD_Move(1,0);
+  LCD_WriteString(line_2);
+}
+
+void __ISR(_TIMER_2_VECTOR, IPL5SOFT) Controller(void)
+{
+  // initialize once
+  static int counter = 0;
+  static int plotind = 0;
+  static int decctr = 0;
+  static int adcval = 0;
+
+  OC1RS = Waveform[counter];
+
+  // Read ADC Value
+  adcval = adc_sample_convert(0); 
+
+  if(StoringData)
+  {
+    ++decctr;
+    if(decctr == DECIMATION)
+    {
+      decctr = 0;
+      ADCarray[plotind] = adcval;
+      REFarray[plotind] = Waveform[counter];
+      ++plotind;
+    }
+    if(plotind == PLOTPTS)
+    {
+      plotind = 0;
+      StoringData = 0;
+    }
+  }
+
+  // add one to counter every time ISR is entered
+  ++counter;
+  if(counter == NUMSAMPS)
+  {
+    // roll the counter over when needed
+    counter = 0;
+  }
+
+  IFS0bits.T2IF = 0;
+}

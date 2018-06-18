@@ -1,0 +1,24 @@
+#ifndef UTILITIES_H
+#define UTILITIES_H
+static volatile mode = 0;
+
+int GetMode(void);
+void Idle(void);
+void utilities_init(void);
+#endif
+#include "utilities.h"
+
+
+int GetMode(void) {
+	return mode;
+}
+
+void Idle(void) {
+	mode = 0;
+}
+
+void utilities_init(void) {
+	Stall()
+}
+
+#endif

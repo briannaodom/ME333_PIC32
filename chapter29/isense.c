@@ -1,0 +1,35 @@
+#include "isense.h"
+#include "NU32.h"         
+
+#define SAMPLETIME 10
+ 
+unsigned int ADC_isense(void) { 
+                                                                       
+    unsigned int elapsed = 0;
+    unsigned int finish_time = 0;
+    AD1CHSbits.CH0SA = 0;                 
+    AD1CON1bits.SAMP = 1;                 
+    elapsed = _CP0_GET_COUNT();
+    finish_time = elapsed + SAMPLETIME;
+    while (_CP0_GET_COUNT() < finish_time) 
+    {
+      ;                                   
+    }
+    AD1CON1bits.SAMP = 0;               
+    while (!AD1CON1bits.DONE) 
+    {
+      ;                                   
+    }
+    return ADC1BUF0;                     
+}
+
+float mA_isense(void) {
+  //return (0.1171*ADC_isense()+492.0);
+    return (0.01171*ADC_isense()-49.2);
+}
+
+void isense_init() {
+  AD1PCFGbits.PCFG0 = 0;                
+  AD1CON3bits.ADCS = 2;                                             
+  AD1CON1bits.ADON = 1;                  
+}

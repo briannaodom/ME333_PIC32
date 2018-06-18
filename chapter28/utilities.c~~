@@ -1,0 +1,41 @@
+#include "utilities.h"
+
+static volatile Mode mode = IDLE;
+
+void utilities_init(void) {
+	mode = IDLE;
+
+int GetMode(void) {
+  return mode;
+}
+
+char * getMode(void) {
+  switch(mode) {
+    case IDLE: {
+      return "IDLE";
+      break;
+    }
+    case PWM: {
+      return "PWM";
+      break;
+    }
+    case ITEST: {
+      return "ITEST";
+      break;
+    }
+    case HOLD: {
+      return "HOLD";
+      break;
+    }
+    case TRACK: {
+      return "TRACK";
+      break;
+    }
+  }
+}
+
+void SetMode(Mode) {
+  __builtin_disable_interrupts();
+  Mode = m;
+  __builtin_enable_interrupts();
+}

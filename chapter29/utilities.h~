@@ -1,0 +1,11 @@
+
+#ifndef UTILITIES__H__
+#define UTILITIES__H__
+
+typedef enum {IDLE, PWM, ITEST, HOLD, TRACK} Mode;
+
+int GetMode();
+char * get_str_mode();
+void SetMode(Mode m);
+
+#endif
